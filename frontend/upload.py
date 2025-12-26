@@ -1,140 +1,113 @@
-# frontend/upload.py
-import sys, os
 import streamlit as st
-from datetime import datetime
-
-from utils.database import create_book, update_book_status
-from utils.database import get_book_by_id
-from utils.summary import generate_summary   # <-- Your summary function
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-# -------- File Reader --------
 from docx import Document
 import PyPDF2
 
+from utils.full_summary import summarize_large_text
+from utils.database import (
+    create_book,
+    save_summary,
+    update_book_status
+)
 
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+MAX_FILE_SIZE_MB = 10
 
 
-# ------------------------------------------------------------------
-#                   FILE TEXT EXTRACTION
-# ------------------------------------------------------------------
-
+# ---------- TEXT EXTRACTORS ----------
 def extract_text_from_txt(file):
     return file.getvalue().decode("utf-8", errors="ignore")
 
 
 def extract_text_from_pdf(file):
-    pdf_reader = PyPDF2.PdfReader(file)
+    reader = PyPDF2.PdfReader(file)
     text = ""
-
-    for page in pdf_reader.pages:
-        text += page.extract_text() + "\n"
-
+    for page in reader.pages:
+        if page.extract_text():
+            text += page.extract_text() + "\n"
     return text
 
 
 def extract_text_from_docx(file):
     doc = Document(file)
-    return "\n".join([para.text for para in doc.paragraphs])
+    return "\n".join(p.text for p in doc.paragraphs)
 
 
-# ------------------------------------------------------------------
-#                   MAIN UPLOAD PAGE
-# ------------------------------------------------------------------
-
+# ---------- UPLOAD PAGE ----------
 def show_upload_page(user_id):
-    if not st.session_state.get("logged_in", False):
-        st.error("You must login first!")
+    if not user_id:
+        st.error("Please logout and login again")
         return
 
-    st.markdown("<h1 style='text-align:center; color:#00BFFF;'>📚 Upload Book for Summarization</h1>", unsafe_allow_html=True)
-    st.write("Supported formats: **TXT, PDF, DOCX**")
-    st.write("Maximum file size: **10MB**")
+    st.header("📤 Upload Book")
 
-    uploaded_file = st.file_uploader("Choose a book file", type=['txt', 'pdf', 'docx'])
+    uploaded_file = st.file_uploader(
+        "Upload TXT / PDF / DOCX (Max 10 MB)",
+        type=["txt", "pdf", "docx"]
+    )
 
-    st.subheader("Optional Book Details")
-    title = st.text_input("Book Title")
-    author = st.text_input("Author Name (optional)")
-    chapter = st.text_input("Chapter/Section (optional)")
+    title = st.text_input("📘 Book Title")
+    author = st.text_input("✍️ Author (optional)")
 
     extracted_text = None
 
+    # ---------- FILE VALIDATION ----------
     if uploaded_file:
-        # ---------- Show File Info ----------
-        file_details = {
-            "Filename": uploaded_file.name,
-            "File size (KB)": round(len(uploaded_file.getvalue()) / 1024, 2),
-            "Upload date": datetime.now().strftime("%Y-%m-%d %H:%M")
-        }
+        file_size_mb = uploaded_file.size / (1024 * 1024)
 
-        st.success("File uploaded successfully!")
-        st.json(file_details)
+        if file_size_mb > MAX_FILE_SIZE_MB:
+            st.error("❌ File size must be less than 10 MB")
+            return
 
-        # ---------- Extract Text ----------
         try:
             if uploaded_file.name.endswith(".txt"):
                 extracted_text = extract_text_from_txt(uploaded_file)
-                st.code(extracted_text[:400])
 
             elif uploaded_file.name.endswith(".pdf"):
                 extracted_text = extract_text_from_pdf(uploaded_file)
-                st.code(extracted_text[:400])
 
             elif uploaded_file.name.endswith(".docx"):
                 extracted_text = extract_text_from_docx(uploaded_file)
-                st.code(extracted_text[:400])
+
+            st.success("✅ File uploaded successfully")
+
+            st.text_area(
+                "📄 File Preview (first 1000 characters)",
+                extracted_text[:1000],
+                height=200
+            )
 
         except Exception as e:
-            st.error(f"Error reading file: {str(e)}")
+            st.error(f"File reading error: {e}")
             return
 
-    # ------------------------------------------------------------------
-    #                       UPLOAD & PROCESS BUTTON
-    # ------------------------------------------------------------------
+    # ---------- GENERATE SUMMARY ----------
+    if st.button("🚀 Generate Summary", use_container_width=True):
 
-    if st.button("Upload & Process"):
-        if not uploaded_file:
-            st.error("Please upload a file first.")
+        if not uploaded_file or not title or not extracted_text:
+            st.warning("Please upload file and enter book title")
             return
 
-        if not title:
-            st.error("Please enter a book title.")
-            return
+        with st.spinner("🤖 Generating AI summary..."):
+            summary = summarize_large_text(extracted_text)
 
-        # ---------- Save file locally ----------
-        file_path = os.path.join(UPLOAD_FOLDER, uploaded_file.name)
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getvalue())
-
-        # ---------- Save book record ----------
+        # Save book + summary
         book_id = create_book(
             user_id=user_id,
             title=title,
-            author=author,
-            chapter=chapter,
-            file_path=file_path,
-            raw_text=extracted_text
+            text=extracted_text,
+            author=author
         )
 
-        update_book_status(book_id, "processing")
+        save_summary(book_id, user_id, summary)
 
-        st.success("Book saved! Starting summarization...")
-
-        # ---------- Generate summary ----------
-        with st.spinner("Summarizing content..."):
-            summary = generate_summary(extracted_text)
-
+        # ✅ Update status to summarized
         update_book_status(book_id, "summarized")
 
-        st.success("✔ Summarization complete!")
+        st.success("🎉 Summary generated successfully")
+        st.balloons()   # 🎈 Celebration effect
 
-        st.subheader("Summary Preview:")
-        st.write(summary)
-
-    st.write("---")
-    st.subheader("📜 Upload History (Coming Soon)")
-    st.info("Upload history feature will appear here.")
+        st.subheader("📑 Generated Summary")
+        st.text_area(
+            "Summary",
+            summary,
+            height=300
+        )
