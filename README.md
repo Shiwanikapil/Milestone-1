@@ -54,7 +54,7 @@ Ai\_Project/
 
 │── models/ # AI model integration
 
-│── data/ # Uploads, cache (ignored)
+│── data/ # Uploads, cache (ignored).
 
 │── config/ # Configuration files
 
