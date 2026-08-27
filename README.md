@@ -68,7 +68,7 @@ Ai\_Project/
 
 \- Passwords stored using bcrypt hashing.
 
-\- API keys never committed.
+\- API keys never committed..
 
 
 
