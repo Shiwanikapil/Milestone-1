@@ -1,7 +1,5 @@
 \# AI Project
 
-
-
 \## 📌 Overview
 
 This project is an AI-powered document processing and NLP system built using:
